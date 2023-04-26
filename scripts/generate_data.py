@@ -2,15 +2,16 @@ import argparse
 import rospy
 import ros_numpy
 import json
+import os
 import tf
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-# import matplotlib
-# matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.animation import FuncAnimation
+
+import pandas as pd
 
 from sensor_msgs.msg import PointCloud2
 from nav_msgs.msg import Odometry
@@ -25,8 +26,8 @@ class PointCloudReader:
         self.box_dim_y = 4.5
         self.box_dim_z = 2
 
-        self.pc_ = rospy.Subscriber('/cloud_registered_body', PointCloud2, callback=self.pc_cb, queue_size=1000)
-        self.odom_ = rospy.Subscriber('/Odometry', Odometry, callback=self.odom_cb, queue_size=1000)
+        self.pc_ = rospy.Subscriber('/cloud_registered_body', PointCloud2, callback=self.pc_cb, queue_size=1)
+        self.odom_ = rospy.Subscriber('/Odometry', Odometry, callback=self.odom_cb, queue_size=1)
         self.tf2_ = tf.TransformListener()
 
         self.plot = args.plot
@@ -38,6 +39,11 @@ class PointCloudReader:
             self.x, self.y, self.z = [], [], []
             self.plt = self.ax.scatter(self.x, self.y, self.z, s=0.5)
             self.title = self.ax.set_title('3D Test, time={}'.format(0))
+
+        self.output = args.output
+        self.write_counter = 0
+        self.write_size = 10
+        self.df = pd.DataFrame(data={'scan': [], 'cuboids': [], 'T': []})
 
     def pc_cb(self, msg: PointCloud2):
         H = np.zeros((4, 4))
@@ -64,7 +70,7 @@ class PointCloudReader:
             self.x, self.y, self.z = tf_xyz.T
 
             # print('calculating intersecting cuboids')
-            intersecting_cuboids = set()
+            intersecting_cuboids = {}
             for cuboid in self.cuboids_data:
                 p_w = tf_xyz
                 cp_w = np.array([cuboid['x'], cuboid['y'], cuboid['z']]).reshape((1, 3))
@@ -74,14 +80,22 @@ class PointCloudReader:
                 # print(p_c_rot.shape)
                 num_intersecting = np.sum((np.abs(p_c_rot[:, 0]) <= self.box_dim_x / 2) & (np.abs(p_c_rot[:, 1]) <= self.box_dim_y / 2) & (np.abs(p_c_rot[:, 2]) <= self.box_dim_z / 2))
                 if num_intersecting > 70:
-                    intersecting_cuboids.add(str(cuboid))
+                    intersecting_cuboids[str(cuboid)] = cuboid
                     print('found intersecting cuboid with %d points'%(num_intersecting))
                     # print('cuboid center:', cp_w)
                     # idxs = np.where((np.abs(p_c_rot[:, 0]) <= self.box_dim_x / 2) & (np.abs(p_c_rot[:, 1]) <= self.box_dim_y / 2) & (np.abs(p_c_rot[:, 2]) <= self.box_dim_z / 2))
                     # print('intersecting points:', tf_xyz[idxs, :])
                     # print('projected intersecting points:', p_c_rot[idxs, :])
             # print('intercepting cuboids:', intersecting_cuboids)
-            self.intersect_c = intersecting_cuboids
+            self.intersect_c = intersecting_cuboids.keys()
+
+            self.df.loc[len(self.df.index)] = [xyz, list(intersecting_cuboids.values()), np.linalg.pinv(H)]
+            self.write_counter += 1
+            if self.write_counter % self.write_size == 0:
+                print('Writing batch to file.')
+                fname = os.path.join(self.output, "%d_%d.pkl"%(self.write_counter - self.write_size, self.write_counter))
+                self.df.to_pickle(fname)
+                self.df = self.df.iloc[0:0]
 
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             print("Could not find tf2 at ", msg.header.stamp)
@@ -152,7 +166,8 @@ def main():
 
     # Add arguments
     parser.add_argument('--boxes', help='Path to the boxes file')
-    parser.add_argument('--plot', type=bool, default=False)
+    parser.add_argument('--output', type=str, help='Path to output directory', default='.')
+    parser.add_argument('--plot', action='store_true')
 
     # Parse the arguments
     args = parser.parse_args()
