@@ -1,3 +1,17 @@
+# Pointrcnn
+pointrcnn/*.yml
+pointrcnn/*.yaml
+pointrcnn/*__pycache__*
+pointrcnn/*_ext*
+pointrcnn/output
+pointrcnn/*.cu.o
+pointrcnn/data
+pointrcnn/**/build
+pointrcnn/*.png
+pointrcnn/**/*.egg-info
+pointrcnn/**/dist
+pointrcnn/tools/gt_database/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -14,7 +28,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
