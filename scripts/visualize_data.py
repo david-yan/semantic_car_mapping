@@ -35,12 +35,11 @@ def draw_cuboid(ax, cuboid):
     zy_plot = [cuboid['y'] - z_rot[1], cuboid['y'] + z_rot[1]]
     zz_plot = [cuboid['z'] - z_rot[2], cuboid['z'] + z_rot[2]]
 
-    c = 'b'
+    c = 'r'
 
     cuboid_plot = [ax.plot(xx_plot, xy_plot, xz_plot, c)[0], ax.plot(yx_plot, yy_plot, yz_plot, c)[0], ax.plot(zx_plot, zy_plot, zz_plot, c)[0]]
     return cuboid_plot
 
-# Initialize the interactive marker server
 def main():
     # Create an argparse argument parser
     parser = argparse.ArgumentParser(description='Convert a raw text file to JSON')
@@ -59,20 +58,18 @@ def main():
         fig.clear()
 
         ax = Axes3D(fig)
-        ax.set_xlim(-100, 25)
-        ax.set_ylim(-100, 50)
-        ax.set_zlim(-100, 100)
+        # ax.set_xlim(-100, 25)
+        # ax.set_ylim(-100, 50)
+        # ax.set_zlim(-100, 100)
+        ax.set_xlim(-50, 50)
+        ax.set_ylim(-50, 50)
+        ax.set_zlim(-30, 30)
 
-        xyz, cuboids, T = row['scan'], row['cuboids'], row['T']
-        xyz_homo = np.vstack((xyz.T, np.ones(xyz.shape[0])))
-        tf_xyz_homo = (T @ xyz_homo).T
-        factor_stacked = np.repeat(
-            tf_xyz_homo[:, 3].reshape(-1, 1), 3, axis=1)
-        # normalize
-        tf_xyz = np.divide(
-            tf_xyz_homo[:, :3], factor_stacked)
-        # print(tf_xyz.shape)
-        x, y, z = tf_xyz.T
+        xyz, cuboids = row['scan'], row['cuboids']
+        print(xyz.shape)
+
+        x, y, z = xyz.T
+
         ax.scatter(x, y, z, s=0.5)
         ax.set_title('3D Test, i={}'.format(i))
         for cuboid in cuboids:

@@ -14,7 +14,6 @@ from matplotlib.animation import FuncAnimation
 import pandas as pd
 
 from sensor_msgs.msg import PointCloud2
-from nav_msgs.msg import Odometry
 
 class PointCloudReader:
     def __init__(self, args):
@@ -26,8 +25,7 @@ class PointCloudReader:
         self.box_dim_y = 4.5
         self.box_dim_z = 2
 
-        self.pc_ = rospy.Subscriber('/cloud_registered_body', PointCloud2, callback=self.pc_cb, queue_size=1)
-        self.odom_ = rospy.Subscriber('/Odometry', Odometry, callback=self.odom_cb, queue_size=1)
+        self.pc_ = rospy.Subscriber('/cloud_registered_body', PointCloud2, callback=self.pc_cb, queue_size=1000)
         self.tf2_ = tf.TransformListener()
 
         self.plot = args.plot
@@ -40,13 +38,18 @@ class PointCloudReader:
             self.plt = self.ax.scatter(self.x, self.y, self.z, s=0.5)
             self.title = self.ax.set_title('3D Test, time={}'.format(0))
 
+        self.read_counter = 0
+        self.stride = args.stride
+
         self.output = args.output
         self.write_counter = 0
-        self.write_size = 10
+        self.write_size = args.batch_size
         self.df = pd.DataFrame(data={'scan': [], 'cuboids': [], 'T': []})
 
     def pc_cb(self, msg: PointCloud2):
-        H = np.zeros((4, 4))
+        self.read_counter += 1
+        if self.read_counter % self.stride != 0:
+            return
 
         try:
             t, q = self.tf2_.lookupTransform(msg.header.frame_id, 'quadrotor/odom', msg.header.stamp)
@@ -54,43 +57,61 @@ class PointCloudReader:
             H_r = r.as_matrix()
             H_t = np.array(t)
 
+            H = np.zeros((4, 4))
             H[:3, :3] = H_r
             H[:3, 3] = H_t
             H[3, 3] = 1
 
             xyz = ros_numpy.point_cloud2.pointcloud2_to_xyz_array(msg)
-            xyz_homo = np.vstack((xyz.T, np.ones(xyz.shape[0])))
-            tf_xyz_homo = (np.linalg.pinv(H) @ xyz_homo).T
-            factor_stacked = np.repeat(
-                tf_xyz_homo[:, 3].reshape(-1, 1), 3, axis=1)
-            # normalize
-            tf_xyz = np.divide(
-                tf_xyz_homo[:, :3], factor_stacked)
-            # print(tf_xyz.shape)
-            self.x, self.y, self.z = tf_xyz.T
+
+            if self.plot:
+                xyz_homo = np.vstack((xyz.T, np.ones(xyz.shape[0])))
+                tf_xyz_homo = (np.linalg.pinv(H) @ xyz_homo).T
+                factor_stacked = np.repeat(
+                    tf_xyz_homo[:, 3].reshape(-1, 1), 3, axis=1)
+                # normalize
+                tf_xyz = np.divide(
+                    tf_xyz_homo[:, :3], factor_stacked)
+                self.x, self.y, self.z = tf_xyz.T
 
             # print('calculating intersecting cuboids')
             intersecting_cuboids = {}
             for cuboid in self.cuboids_data:
-                p_w = tf_xyz
-                cp_w = np.array([cuboid['x'], cuboid['y'], cuboid['z']]).reshape((1, 3))
-                p_c = p_w - cp_w
+                p_w = xyz
+                # Transform cuboid to be in ego-centric coordinates
+                cp_w_homo = np.array([cuboid['x'], cuboid['y'], cuboid['z'], 1]).reshape((4, 1))
+                tf_cp_homo = H @ cp_w_homo
+                tf_cp = tf_cp_homo[:3].T
+
                 q = R.from_quat([cuboid['qx'], cuboid['qy'], cuboid['qz'], cuboid['w']])
-                p_c_rot = q.apply(p_c)
+                tf_q = r * q
+                tf_q_quat = tf_q.as_quat()
+                tf_cuboid = {
+                    'x': tf_cp_homo[0, 0],
+                    'y': tf_cp_homo[1, 0],
+                    'z': tf_cp_homo[2, 0],
+                    'qx': tf_q_quat[0],
+                    'qy': tf_q_quat[1],
+                    'qz': tf_q_quat[2],
+                    'w': tf_q_quat[3]
+                }
+
+                p_c = p_w - tf_cp
+                p_c_rot = tf_q.apply(p_c)
+
                 # print(p_c_rot.shape)
                 num_intersecting = np.sum((np.abs(p_c_rot[:, 0]) <= self.box_dim_x / 2) & (np.abs(p_c_rot[:, 1]) <= self.box_dim_y / 2) & (np.abs(p_c_rot[:, 2]) <= self.box_dim_z / 2))
                 if num_intersecting > 70:
-                    intersecting_cuboids[str(cuboid)] = cuboid
-                    print('found intersecting cuboid with %d points'%(num_intersecting))
+                    intersecting_cuboids[str(cuboid)] = tf_cuboid
+                    # print('found intersecting cuboid with %d points'%(num_intersecting))
                     # print('cuboid center:', cp_w)
-                    # idxs = np.where((np.abs(p_c_rot[:, 0]) <= self.box_dim_x / 2) & (np.abs(p_c_rot[:, 1]) <= self.box_dim_y / 2) & (np.abs(p_c_rot[:, 2]) <= self.box_dim_z / 2))
-                    # print('intersecting points:', tf_xyz[idxs, :])
-                    # print('projected intersecting points:', p_c_rot[idxs, :])
+                    
             # print('intercepting cuboids:', intersecting_cuboids)
             self.intersect_c = intersecting_cuboids.keys()
 
             self.df.loc[len(self.df.index)] = [xyz, list(intersecting_cuboids.values()), np.linalg.pinv(H)]
             self.write_counter += 1
+            print('write_counter:', self.write_counter)
             if self.write_counter % self.write_size == 0:
                 print('Writing batch to file.')
                 fname = os.path.join(self.output, "%d_%d.pkl"%(self.write_counter - self.write_size, self.write_counter))
@@ -100,8 +121,6 @@ class PointCloudReader:
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             print("Could not find tf2 at ", msg.header.stamp)
         
-    def odom_cb(self, msg: Odometry):
-        pass
 
     def draw_cuboid(self, cuboid, intersecting=False):
         q = R.from_quat([cuboid['qx'], cuboid['qy'], cuboid['qz'], cuboid['w']])
@@ -168,6 +187,8 @@ def main():
     parser.add_argument('--boxes', help='Path to the boxes file')
     parser.add_argument('--output', type=str, help='Path to output directory', default='.')
     parser.add_argument('--plot', action='store_true')
+    parser.add_argument('--batch_size', default=10, type=int)
+    parser.add_argument('--stride', default=1, type=int)
 
     # Parse the arguments
     args = parser.parse_args()
