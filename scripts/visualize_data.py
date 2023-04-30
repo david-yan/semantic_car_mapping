@@ -6,7 +6,6 @@ from scipy.spatial.transform import Rotation as R
 
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from matplotlib.animation import FuncAnimation
 
 import pandas as pd
 
@@ -66,7 +65,7 @@ def main():
         ax.set_zlim(-30, 30)
 
         xyz, cuboids = row['scan'], row['cuboids']
-        print(xyz.shape)
+        # print(xyz.shape)
 
         x, y, z = xyz.T
 

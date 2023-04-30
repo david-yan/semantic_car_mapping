@@ -5,6 +5,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 import pandas as pd
 
+from utils import rotate_cuboid
+
 def clip_fov(xyz, cuboids, lower=-np.pi / 6, upper=np.pi / 6):
     # print('lower:', lower, 'upper:', upper)
     x, y = xyz[:, :2].T
@@ -35,22 +37,31 @@ def clip_fov(xyz, cuboids, lower=-np.pi / 6, upper=np.pi / 6):
 
     return filtered_xyz, list(i_cuboids.values())
 
-def rotate_cuboid(cuboid, q):
-    c_c = np.array([cuboid['x'], cuboid['y'], cuboid['z']])
-    q_c = R.from_quat([cuboid['qx'], cuboid['qy'], cuboid['qz'], cuboid['w']])
-    c_tf = q.apply(c_c)
-    q_tf = (q * q_c).as_quat()
 
-    tf_cuboid = {
-        'x': c_tf[0],
-        'y': c_tf[1],
-        'z': c_tf[2],
-        'qx': q_tf[0],
-        'qy': q_tf[1],
-        'qz': q_tf[2],
-        'w': q_tf[3]
-    }
-    return tf_cuboid
+def ransac_plane(xyz, threshold=0.2, iterations=50000):
+    best_sample = None
+    best_w = None
+    idxs_inlier=[]
+    n_points=len(xyz)
+    for i in range(iterations):
+        idx_samples = np.random.choice(n_points, 3)
+        pts = xyz[idx_samples]
+        vecA = pts[1] - pts[0]
+        vecB = pts[2] - pts[0]
+        normal = np.cross(vecA, vecB)
+        w = normal / np.linalg.norm(normal)
+        a,b,c = w
+        d=-np.sum(normal*pts[1])
+        distance = (a * xyz[:,0] + b * xyz[:,1] + c * xyz[:,2] + d
+                    ) / np.sqrt(a ** 2 + b ** 2 + c ** 2)
+
+        idx_candidates = np.where(np.abs(distance) <= threshold)[0]
+        if len(idx_candidates) > len(idxs_inlier):
+            idxs_inlier = idx_candidates
+            best_sample = idx_samples
+            best_w = w
+            
+    return best_w, idxs_inlier, best_sample
 
 def main():
     # Create an argparse argument parser
@@ -72,6 +83,37 @@ def main():
     for _, row in df.iterrows():
         xyz, cuboids, T = row['scan'], row['cuboids'], row['T']
 
+        filtered_xyz = xyz[np.where(xyz[:, 2] <= 1)]
+        # print('pre unique check', len(filtered_xyz))
+        filtered_xyz = np.unique(filtered_xyz, axis=0)
+        # print('post unique check', len(filtered_xyz))
+        w_plane, idxs_inlier, idx_sample = ransac_plane(filtered_xyz)
+        # print('num inliers:', len(np.unique(idxs_inlier)))
+
+        w_des = np.array([0, 0, 1])
+        r_axis = np.cross(w_des, w_plane)
+        r_axis /= np.linalg.norm(r_axis)
+        r_theta = np.arccos(w_plane.dot(w_des))
+        # print(r_axis, r_theta)
+
+        flip_z = None
+        if r_theta > 3/4 * np.pi:
+            flip_z = R.from_quat([np.sin(np.pi/2), 0, 0, np.cos(np.pi/2)])
+
+        # print(np.hstack((r_axis * np.sin(r_theta/2), np.cos(r_theta/2))))
+        q_rot = R.from_quat(np.hstack((r_axis * np.sin(r_theta/2), np.cos(r_theta/2)))).inv()
+        if flip_z is not None:
+            q_rot = flip_z * q_rot
+        # print('q_rot:', q_rot.as_quat())
+
+        T_rot = np.zeros((4, 4))
+        T_rot[:3, :3] = q_rot.as_matrix()
+        T_rot[3, 3] = 1
+
+        corrected_xyz = q_rot.apply(xyz)
+        corrected_cuboids = [rotate_cuboid(cuboid, q_rot) for cuboid in cuboids]
+        corrected_T = T_rot @ T
+
         # Clip FOV
         # d_theta = np.pi / 6
         # for i in range(6):
@@ -89,11 +131,12 @@ def main():
             theta_ran = np.random.uniform(0, 2 * np.pi)
             q_ran = R.from_quat([0, 0, np.sin(theta_ran / 2), np.cos(theta_ran / 2)])
             T_ran = np.zeros((4, 4))
-            T[:3, :3] = q_ran.as_matrix()
-            T[3, 3] = 1
-            rotated_xyz = q_ran.apply(xyz)
-            rotated_cuboids = [rotate_cuboid(cuboid, q_ran) for cuboid in cuboids]
-            rotated_T = T_ran @ T
+            T_ran[:3, :3] = q_ran.as_matrix()
+            T_ran[3, 3] = 1
+
+            rotated_xyz = q_ran.apply(corrected_xyz)
+            rotated_cuboids = [rotate_cuboid(cuboid, q_ran) for cuboid in corrected_cuboids]
+            rotated_T = T_ran @ corrected_T
             df_out.loc[len(df_out.index)] = [rotated_xyz, rotated_cuboids, rotated_T]
 
     fout = args.input.replace('.pkl', '_processed.pkl')
