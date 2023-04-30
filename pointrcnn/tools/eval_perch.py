@@ -242,65 +242,146 @@ def eval_one_epoch_joint(model, dataloader, epoch_id, result_dir, logger):
     total_roi_recalled_bbox_list = [0] * 5
     cnt = final_total = total_cls_acc = total_cls_acc_refined = total_rpn_iou = 0
 
+    progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='eval')
+    
+    for data in dataloader:
+        pts_rect, pts_features, pts_input = data['pts_rect'], data['pts_features'], data['pts_input']
+        batch_size = len(pts_input)
+        inputs = torch.from_numpy(pts_input).cuda(non_blocking=True).float()
+        input_data = {'pts_input': inputs}
+        # model inference
+        ret_dict = model(input_data)
 
-    pts_input = get_input()
-    batch_size = len(pts_input)
-    inputs = torch.from_numpy(pts_input).cuda(non_blocking=True).float()
-    input_data = {'pts_input': inputs}
-    print(pts_input.shape, batch_size)
-    # model inference
-    ret_dict = model(input_data)
+        roi_scores_raw = ret_dict['roi_scores_raw']  # (B, M)
+        roi_boxes3d = ret_dict['rois']  # (B, M, 7)
+        seg_result = ret_dict['seg_result'].long()  # (B, N)
 
-    roi_scores_raw = ret_dict['roi_scores_raw']  # (B, M)
-    roi_boxes3d = ret_dict['rois']  # (B, M, 7)
-    seg_result = ret_dict['seg_result'].long()  # (B, N)
+        rcnn_cls = ret_dict['rcnn_cls'].view(batch_size, -1, ret_dict['rcnn_cls'].shape[1])
+        rcnn_reg = ret_dict['rcnn_reg'].view(batch_size, -1, ret_dict['rcnn_reg'].shape[1])  # (B, M, C)
 
-    rcnn_cls = ret_dict['rcnn_cls'].view(batch_size, -1, ret_dict['rcnn_cls'].shape[1])
-    rcnn_reg = ret_dict['rcnn_reg'].view(batch_size, -1, ret_dict['rcnn_reg'].shape[1])  # (B, M, C)
+        # bounding box regression
+        anchor_size = MEAN_SIZE
+        if cfg.RCNN.SIZE_RES_ON_ROI:
+            assert False
 
-    # bounding box regression
-    anchor_size = MEAN_SIZE
-    if cfg.RCNN.SIZE_RES_ON_ROI:
-        assert False
+        pred_boxes3d = decode_bbox_target(roi_boxes3d.view(-1, 7), rcnn_reg.view(-1, rcnn_reg.shape[-1]),
+                                            anchor_size=anchor_size,
+                                            loc_scope=cfg.RCNN.LOC_SCOPE,
+                                            loc_bin_size=cfg.RCNN.LOC_BIN_SIZE,
+                                            num_head_bin=cfg.RCNN.NUM_HEAD_BIN,
+                                            get_xz_fine=True, get_y_by_bin=cfg.RCNN.LOC_Y_BY_BIN,
+                                            loc_y_scope=cfg.RCNN.LOC_Y_SCOPE, loc_y_bin_size=cfg.RCNN.LOC_Y_BIN_SIZE,
+                                            get_ry_fine=True).view(batch_size, -1, 7)
+        # print(pred_boxes3d, rcnn_cls)
+        # scoring
+        if rcnn_cls.shape[2] == 1:
+            raw_scores = rcnn_cls  # (B, M, 1)
 
-    pred_boxes3d = decode_bbox_target(roi_boxes3d.view(-1, 7), rcnn_reg.view(-1, rcnn_reg.shape[-1]),
-                                        anchor_size=anchor_size,
-                                        loc_scope=cfg.RCNN.LOC_SCOPE,
-                                        loc_bin_size=cfg.RCNN.LOC_BIN_SIZE,
-                                        num_head_bin=cfg.RCNN.NUM_HEAD_BIN,
-                                        get_xz_fine=True, get_y_by_bin=cfg.RCNN.LOC_Y_BY_BIN,
-                                        loc_y_scope=cfg.RCNN.LOC_Y_SCOPE, loc_y_bin_size=cfg.RCNN.LOC_Y_BIN_SIZE,
-                                        get_ry_fine=True).view(batch_size, -1, 7)
-    # print(pred_boxes3d, rcnn_cls)
-    # scoring
-    if rcnn_cls.shape[2] == 1:
-        raw_scores = rcnn_cls  # (B, M, 1)
+            norm_scores = torch.sigmoid(raw_scores)
+            pred_classes = (norm_scores > cfg.RCNN.SCORE_THRESH).long()
 
-        norm_scores = torch.sigmoid(raw_scores)
-        pred_classes = (norm_scores > cfg.RCNN.SCORE_THRESH).long()
+        # evaluation
+        recalled_num = gt_num = rpn_iou = 0
+        if not args.test:
+            if not cfg.RPN.FIXED:
+                rpn_cls_label, rpn_reg_label = data['rpn_cls_label'], data['rpn_reg_label']
+                rpn_cls_label = torch.from_numpy(rpn_cls_label).cuda(non_blocking=True).long()
 
-    # scores thresh
-    inds = norm_scores > cfg.RCNN.SCORE_THRESH
+            gt_boxes3d = data['gt_boxes3d']
 
-    for k in range(batch_size):
-        cur_inds = inds[k].view(-1)
-        if cur_inds.sum() == 0:
-            continue
+            for k in range(batch_size):
+                # calculate recall
+                cur_gt_boxes3d = gt_boxes3d[k]
+                tmp_idx = cur_gt_boxes3d.__len__() - 1
 
-        pred_boxes3d_selected = pred_boxes3d[k, cur_inds]
-        raw_scores_selected = raw_scores[k, cur_inds]
-        norm_scores_selected = norm_scores[k, cur_inds]
+                while tmp_idx >= 0 and cur_gt_boxes3d[tmp_idx].sum() == 0:
+                    tmp_idx -= 1
 
-        # NMS thresh
-        # rotated nms
-        boxes_bev_selected = kitti_utils.boxes3d_to_bev_torch(pred_boxes3d_selected)
-        keep_idx = iou3d_utils.nms_gpu(boxes_bev_selected, raw_scores_selected, cfg.RCNN.NMS_THRESH).view(-1)
-        pred_boxes3d_selected = pred_boxes3d_selected[keep_idx]
-        scores_selected = raw_scores_selected[keep_idx]
-        pred_boxes3d_selected, scores_selected = pred_boxes3d_selected.cpu().numpy(), scores_selected.cpu().numpy()
+                if tmp_idx >= 0:
+                    cur_gt_boxes3d = cur_gt_boxes3d[:tmp_idx + 1]
+
+                    cur_gt_boxes3d = torch.from_numpy(cur_gt_boxes3d).cuda(non_blocking=True).float()
+                    iou3d = iou3d_utils.boxes_iou3d_gpu(pred_boxes3d[k], cur_gt_boxes3d)
+                    gt_max_iou, _ = iou3d.max(dim=0)
+                    refined_iou, _ = iou3d.max(dim=1)
+
+                    for idx, thresh in enumerate(thresh_list):
+                        total_recalled_bbox_list[idx] += (gt_max_iou > thresh).sum().item()
+                    recalled_num += (gt_max_iou > 0.7).sum().item()
+                    gt_num += cur_gt_boxes3d.shape[0]
+                    total_gt_bbox += cur_gt_boxes3d.shape[0]
+
+                    # original recall
+                    iou3d_in = iou3d_utils.boxes_iou3d_gpu(roi_boxes3d[k], cur_gt_boxes3d)
+                    gt_max_iou_in, _ = iou3d_in.max(dim=0)
+
+                    for idx, thresh in enumerate(thresh_list):
+                        total_roi_recalled_bbox_list[idx] += (gt_max_iou_in > thresh).sum().item()
+
+                if not cfg.RPN.FIXED:
+                    fg_mask = rpn_cls_label > 0
+                    correct = ((seg_result == rpn_cls_label) & fg_mask).sum().float()
+                    union = fg_mask.sum().float() + (seg_result > 0).sum().float() - correct
+                    rpn_iou = correct / torch.clamp(union, min=1.0)
+                    total_rpn_iou += rpn_iou.item()
+
+        disp_dict = {'mode': mode, 'recall': '%d/%d' % (total_recalled_bbox_list[3], total_gt_bbox)}
+        progress_bar.set_postfix(disp_dict)
+        progress_bar.update()
+
+
+        # scores thresh
+        inds = norm_scores > cfg.RCNN.SCORE_THRESH
+
+        for k in range(batch_size):
+            cur_inds = inds[k].view(-1)
+            if cur_inds.sum() == 0:
+                continue
+
+            pred_boxes3d_selected = pred_boxes3d[k, cur_inds]
+            raw_scores_selected = raw_scores[k, cur_inds]
+            norm_scores_selected = norm_scores[k, cur_inds]
+
+            # NMS thresh
+            # rotated nms
+            boxes_bev_selected = kitti_utils.boxes3d_to_bev_torch(pred_boxes3d_selected)
+            keep_idx = iou3d_utils.nms_gpu(boxes_bev_selected, raw_scores_selected, cfg.RCNN.NMS_THRESH).view(-1)
+            pred_boxes3d_selected = pred_boxes3d_selected[keep_idx]
+            scores_selected = raw_scores_selected[keep_idx]
+            pred_boxes3d_selected, scores_selected = pred_boxes3d_selected.cpu().numpy(), scores_selected.cpu().numpy()
         
-        print(pred_boxes3d_selected, scores_selected)
+    progress_bar.close()
     # visualize_data(pts_input, pred_boxes3d_selected)
+
+    logger.info('-------------------performance of epoch %s---------------------' % epoch_id)
+    logger.info(str(datetime.now()))
+
+    avg_rpn_iou = (total_rpn_iou / max(cnt, 1.0))
+    avg_cls_acc = (total_cls_acc / max(cnt, 1.0))
+    avg_cls_acc_refined = (total_cls_acc_refined / max(cnt, 1.0))
+    avg_det_num = (final_total / max(len(dataloader.dataset), 1.0))
+    logger.info('final average detections: %.3f' % avg_det_num)
+    logger.info('final average rpn_iou refined: %.3f' % avg_rpn_iou)
+    logger.info('final average cls acc: %.3f' % avg_cls_acc)
+    logger.info('final average cls acc refined: %.3f' % avg_cls_acc_refined)
+    ret_dict['rpn_iou'] = avg_rpn_iou
+    ret_dict['rcnn_cls_acc'] = avg_cls_acc
+    ret_dict['rcnn_cls_acc_refined'] = avg_cls_acc_refined
+    ret_dict['rcnn_avg_num'] = avg_det_num
+
+    for idx, thresh in enumerate(thresh_list):
+        cur_roi_recall = total_roi_recalled_bbox_list[idx] / max(total_gt_bbox, 1.0)
+        logger.info('total roi bbox recall(thresh=%.3f): %d / %d = %f' % (thresh, total_roi_recalled_bbox_list[idx],
+                                                                          total_gt_bbox, cur_roi_recall))
+        ret_dict['rpn_recall(thresh=%.2f)' % thresh] = cur_roi_recall
+
+    for idx, thresh in enumerate(thresh_list):
+        cur_recall = total_recalled_bbox_list[idx] / max(total_gt_bbox, 1.0)
+        logger.info('total bbox recall(thresh=%.3f): %d / %d = %f' % (thresh, total_recalled_bbox_list[idx],
+                                                                      total_gt_bbox, cur_recall))
+        ret_dict['rcnn_recall(thresh=%.2f)' % thresh] = cur_recall
+
+
     return ret_dict
 
 
