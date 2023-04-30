@@ -61,27 +61,27 @@ def main():
     #     ax.set_ylim(-100, 50)
     #     ax.set_zlim(-100, 100)
 
-        # xyz, cuboids, T = row['scan'], row['cuboids'], row['T']
-        # xyz_homo = np.vstack((xyz.T, np.ones(xyz.shape[0])))
-        # tf_xyz_homo = (T @ xyz_homo).T
-        # factor_stacked = np.repeat(
-        #     tf_xyz_homo[:, 3].reshape(-1, 1), 3, axis=1)
-        # # normalize
-        # tf_xyz = np.divide(
-        #     tf_xyz_homo[:, :3], factor_stacked)
-        # # print(tf_xyz.shape)
+    #     xyz, cuboids, T = row['scan'], row['cuboids'], row['T']
+    #     # xyz_homo = np.vstack((xyz.T, np.ones(xyz.shape[0])))
+    #     # tf_xyz_homo = (T @ xyz_homo).T
+    #     # factor_stacked = np.repeat(
+    #     #     tf_xyz_homo[:, 3].reshape(-1, 1), 3, axis=1)
+    #     # # normalize
+    #     # tf_xyz = np.divide(
+    #     #     tf_xyz_homo[:, :3], factor_stacked)
+    #     # # print(tf_xyz.shape)
 
-        # x, y, z = tf_xyz.T
-        # ax.scatter(x, y, z, s=0.5)
-        # ax.set_title('3D Test, i={}'.format(i))
+    #     x, y, z = xyz.T
+    #     ax.scatter(x, y, z, s=0.5)
+    #     ax.set_title('3D Test, i={}'.format(i))
         
-        # for cuboid in cuboids:
-        #     draw_cuboid(ax, cuboid)
+    #     # for cuboid in cuboids:
+    #     #     draw_cuboid(ax, cuboid)
 
-        # pred_cuboids = [{'x': -1.5675459e+00, 'y':6.7969032e+01, 'z':5.9100425e-01, 'qx': 0, 'qy': 0, 'qz': 0, 'w': 1}]
-        # draw_cuboid(ax, pred_cuboids[0], c='r')
+    #     # pred_cuboids = [{'x': -1.5675459e+00, 'y':6.7969032e+01, 'z':5.9100425e-01, 'qx': 0, 'qy': 0, 'qz': 0, 'w': 1}]
+    #     # draw_cuboid(ax, pred_cuboids[0], c='r')
 
-        # plt.show()
+    #     plt.show()
 
     fig = plt.figure()
     fig.clear()
