@@ -36,7 +36,7 @@ RPN:
     # config of network structure
     BACKBONE: pointnet2_msg
     USE_BN: True
-    NUM_POINTS: 16384
+    NUM_POINTS: 65536
 
     SA_CONFIG:
         NPOINTS: [4096, 1024, 256, 64]
