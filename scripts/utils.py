@@ -5,8 +5,8 @@ def rotate_cuboid(cuboid, q):
     c_c = np.array([cuboid['x'], cuboid['y'], cuboid['z']])
     q_c = R.from_quat([cuboid['qx'], cuboid['qy'], cuboid['qz'], cuboid['w']])
     c_tf = q.apply(c_c)
-    print('center before:', c_c)
-    print('center after:', c_tf)
+    # print('center before:', c_c)
+    # print('center after:', c_tf)
     q_tf = (q * q_c).as_quat()
 
     tf_cuboid = {

@@ -49,7 +49,10 @@ def ransac_plane(xyz, threshold=0.2, iterations=50000):
         vecA = pts[1] - pts[0]
         vecB = pts[2] - pts[0]
         normal = np.cross(vecA, vecB)
-        w = normal / np.linalg.norm(normal)
+        w_mag = np.linalg.norm(normal)
+        if w_mag == 0:
+            continue
+        w = normal / w_mag
         a,b,c = w
         d=-np.sum(normal*pts[1])
         distance = (a * xyz[:,0] + b * xyz[:,1] + c * xyz[:,2] + d
@@ -79,9 +82,12 @@ def main():
 
     df_out = pd.DataFrame(data={'scan': [], 'cuboids': [], 'T': []})
 
-
+    last_t = None
     for _, row in df.iterrows():
         xyz, cuboids, T = row['scan'], row['cuboids'], row['T']
+        if last_t is not None and np.linalg.norm(T[:2, 3] - last_t) < 0.5:
+            continue
+        last_t = T[:2, 3]
 
         filtered_xyz = xyz[np.where(xyz[:, 2] <= 1)]
         # print('pre unique check', len(filtered_xyz))
@@ -113,6 +119,8 @@ def main():
         corrected_xyz = q_rot.apply(xyz)
         corrected_cuboids = [rotate_cuboid(cuboid, q_rot) for cuboid in cuboids]
         corrected_T = T_rot @ T
+
+        df_out.loc[len(df_out.index)] = [corrected_xyz, corrected_cuboids, corrected_T]
 
         # Clip FOV
         # d_theta = np.pi / 6
