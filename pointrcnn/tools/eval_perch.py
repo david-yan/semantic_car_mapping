@@ -25,6 +25,8 @@ import time
 from tensorboardX import SummaryWriter
 import tqdm
 
+import pandas as pd
+
 np.random.seed(1024)  # set the same seed
 
 parser = argparse.ArgumentParser(description="arg parser")
@@ -244,7 +246,12 @@ def eval_one_epoch_joint(model, dataloader, epoch_id, result_dir, logger):
 
     progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='eval')
     
+    file_idx = 0
     for data in dataloader:
+        file_idx += 1
+
+        df_out = pd.DataFrame(data={'scan': [], 'cuboids': [], 'scores': []})
+
         pts_rect, pts_features, pts_input = data['pts_rect'], data['pts_features'], data['pts_input']
         batch_size = len(pts_input)
         inputs = torch.from_numpy(pts_input).cuda(non_blocking=True).float()
@@ -349,7 +356,11 @@ def eval_one_epoch_joint(model, dataloader, epoch_id, result_dir, logger):
             pred_boxes3d_selected = pred_boxes3d_selected[keep_idx]
             scores_selected = raw_scores_selected[keep_idx]
             pred_boxes3d_selected, scores_selected = pred_boxes3d_selected.cpu().numpy(), scores_selected.cpu().numpy()
+
+            df_out.loc[len(df_out.index)] = [pts_input[k], pred_boxes3d_selected, scores_selected]
         
+        fout = os.path.join('../output', 'rcnn', 'pred_pickles', str(file_idx) + '.pkl')
+        df_out.to_pickle(fout)
     progress_bar.close()
     # visualize_data(pts_input, pred_boxes3d_selected)
 

@@ -5,7 +5,7 @@ INCLUDE_SIMILAR_TYPE: True
 # config of augmentation
 AUG_DATA: True
 AUG_METHOD_LIST: ['rotation', 'scaling', 'flip']
-AUG_METHOD_PROB: [1.0, 1.0, 0.5]
+AUG_METHOD_PROB: [0.7, 1.0, 0.5]
 AUG_ROT_RANGE: 18
 
 GT_AUG_ENABLED: True

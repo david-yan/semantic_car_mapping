@@ -14,51 +14,88 @@ class PerchDataset(torch_data.Dataset):
     def __init__(self, root_dir, mode):
         self.mode = mode
         # TODO: change the hardcoding
-        self.input_dir = os.path.join(root_dir, 'PENN', 'PERCH', 'very-important-3-preprocessed.pkl')
-        self.load_pickle(self.input_dir)
+        self.input_dirs = [os.path.join(root_dir, 'PENN', 'PERCH', 'very-important-3_processed.pkl'),
+                          os.path.join(root_dir, 'PENN', 'PERCH', 'falcon_processed.pkl'),
+                          os.path.join(root_dir, 'PENN', 'PERCH', 'open-field_processed.pkl')]
+        
+        # for old model
+        if mode == 'EVAL':
+            self.input_dirs = [os.path.join(root_dir, 'PENN', 'PERCH', 'very-important-3-preprocessed.pkl')]
+        self.load_pickle(self.input_dirs)
 
-    def load_pickle(self, input_dir):
-        df = pd.read_pickle(input_dir)
+    def load_pickle(self, input_dirs):
         self.pts_lidar, self.gt_boxes3d, self.T = [], [], []
-        for i, row in df.iterrows():
-            pts_scan, cuboids, T = row['scan'], row['cuboids'], row['T']
-            self.T.append(T)
+        for input_dir in input_dirs:
+            df = pd.read_pickle(input_dir)
+            
+            for i, row in df.iterrows():
+                pts_scan, cuboids, T = row['scan'], row['cuboids'], row['T']
 
-            # switch coordinate, x rightward, y downward, z forward
-            pts_lidar = np.zeros_like(np.array(pts_scan))
-            pts_lidar[..., 0] = -pts_scan[..., 1]
-            pts_lidar[..., 1] = -pts_scan[..., 2]
-            pts_lidar[..., 2] = pts_scan[..., 0]
-            self.pts_lidar.append(pts_lidar)
+                if len(self.T) != 0:
+                    t_last = self.T[-1][0:2, 3]
+                    t_cur = T[0:2, 3]
+                    if np.linalg.norm(t_cur - t_last) < 1:  # if drone hasn't move 1 meter in x, y direction, drop this sample
+                        continue
 
-            # process ground truth bounding boxes
-            gt_boxes3d = np.empty((len(cuboids), 7))
-            for i in range(len(cuboids)):
-                cuboid = cuboids[i]
-                q = R.from_quat([cuboid['qx'], cuboid['qy'], cuboid['qz'], cuboid['w']])
-                rot_euler = q.as_euler('zyx', degrees=False)
-                yaw = rot_euler[0]
-                gt_boxes3d[i] = np.array([-cuboid['y'], -cuboid['z'], cuboid['x'], 1.52563191462, 1.62856739989, 3.88311640418, yaw])
-            self.gt_boxes3d.append(gt_boxes3d)
+                self.T.append(T)
+
+                # switch coordinate, x rightward, y downward, z forward
+                pts_lidar = np.zeros_like(np.array(pts_scan))
+                pts_lidar[..., 0] = -pts_scan[..., 1]
+                pts_lidar[..., 1] = -pts_scan[..., 2]
+                pts_lidar[..., 2] = pts_scan[..., 0]
+                self.pts_lidar.append(pts_lidar)
+
+                # process ground truth bounding boxes
+                gt_boxes3d = np.empty((len(cuboids), 7))
+                for i in range(len(cuboids)):
+                    cuboid = cuboids[i]
+                    q = R.from_quat([cuboid['qx'], cuboid['qy'], cuboid['qz'], cuboid['w']])
+                    rot_euler = q.as_euler('zyx', degrees=False)
+                    yaw = rot_euler[0]
+                    gt_boxes3d[i] = np.array([-cuboid['y'], -cuboid['z'], cuboid['x'], 1.52563191462, 1.62856739989, 3.88311640418, yaw])
+                self.gt_boxes3d.append(gt_boxes3d)
+
+        print("Loaded %d samples from datasets" % len(self.gt_boxes3d))
 
     def __len__(self):
         return len(self.pts_lidar)
 
     def __getitem__(self, index):
         sample_info = {}
-        sample_info['pts_input'] = self.pts_lidar[index]
-        sample_info['pts_rect'] = self.pts_lidar[index]
-        sample_info['pts_features'] = self.pts_lidar[index]
-        sample_info['gt_boxes3d'] = self.gt_boxes3d[index]
+
+        aug_pts_lidar, aug_gt_boxes3d = self.pts_lidar[index], self.gt_boxes3d[index]
+        if cfg.AUG_DATA and self.mode == 'TRAIN':
+            aug_pts_lidar, aug_gt_boxes3d = self.data_augmentation(self.pts_lidar[index], self.gt_boxes3d[index])
+
+        sample_info['pts_input'] = aug_pts_lidar
+        sample_info['pts_rect'] = aug_pts_lidar
+        sample_info['pts_features'] = aug_pts_lidar
+        sample_info['gt_boxes3d'] = aug_gt_boxes3d
 
         if cfg.RPN.FIXED:
             return sample_info
 
-        rpn_cls_label, rpn_reg_label = self.generate_rpn_training_labels(self.pts_lidar[index], self.gt_boxes3d[index])
+        rpn_cls_label, rpn_reg_label = self.generate_rpn_training_labels(aug_pts_lidar, aug_gt_boxes3d)
         sample_info['rpn_cls_label'] = rpn_cls_label
         sample_info['rpn_reg_label'] = rpn_reg_label
         return sample_info
 
+    def data_augmentation(self, pts_input, gt_boxes3d):
+        aug_list = cfg.AUG_METHOD_LIST
+        aug_enable = 1 - np.random.rand(3)
+
+        aug_pts_input, aug_gt_boxes3d = pts_input, gt_boxes3d
+        if 'rotation' in aug_list and aug_enable[0] < cfg.AUG_METHOD_PROB[0]:
+            angle = np.random.uniform(0, 2 * np.pi)
+            aug_pts_input = kitti_utils.rotate_pc_along_y(pts_input, rot_angle=angle)
+            aug_gt_boxes3d = kitti_utils.rotate_pc_along_y(gt_boxes3d, rot_angle=angle)
+
+            # TODO: calculate the ry after rotation
+            aug_gt_boxes3d[:, 6] = (gt_boxes3d[:, 6] + angle) % np.pi
+
+        return aug_pts_input, aug_gt_boxes3d
+    
     @staticmethod
     def generate_rpn_training_labels(pts_rect, gt_boxes3d):
         cls_label = np.zeros((pts_rect.shape[0]), dtype=np.int32)
