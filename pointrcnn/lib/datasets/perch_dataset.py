@@ -19,8 +19,8 @@ class PerchDataset(torch_data.Dataset):
                           os.path.join(root_dir, 'PENN', 'PERCH', 'open-field_processed.pkl')]
         
         # for old model
-        if mode == 'EVAL':
-            self.input_dirs = [os.path.join(root_dir, 'PENN', 'PERCH', 'very-important-3-preprocessed.pkl')]
+        # if mode == 'EVAL':
+        #     self.input_dirs = [os.path.join(root_dir, 'PENN', 'PERCH', 'very-important-3-preprocessed.pkl')]
         self.load_pickle(self.input_dirs)
 
     def load_pickle(self, input_dirs):
@@ -36,6 +36,8 @@ class PerchDataset(torch_data.Dataset):
                     t_cur = T[0:2, 3]
                     if np.linalg.norm(t_cur - t_last) < 1:  # if drone hasn't move 1 meter in x, y direction, drop this sample
                         continue
+                
+                if len(cuboids) == 0: continue # no gt boxes
 
                 self.T.append(T)
 
@@ -45,6 +47,8 @@ class PerchDataset(torch_data.Dataset):
                 pts_lidar[..., 1] = -pts_scan[..., 2]
                 pts_lidar[..., 2] = pts_scan[..., 0]
                 self.pts_lidar.append(pts_lidar)
+                if pts_lidar.shape[0] != 65536:
+                    print(pts_lidar.shape)
 
                 # process ground truth bounding boxes
                 gt_boxes3d = np.empty((len(cuboids), 7))

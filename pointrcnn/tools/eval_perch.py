@@ -250,9 +250,9 @@ def eval_one_epoch_joint(model, dataloader, epoch_id, result_dir, logger):
     for data in dataloader:
         file_idx += 1
 
-        df_out = pd.DataFrame(data={'scan': [], 'cuboids': [], 'scores': []})
+        df_out = pd.DataFrame(data={'scan': [], 'gt_cuboids': [], 'cuboids': [], 'scores': []})
 
-        pts_rect, pts_features, pts_input = data['pts_rect'], data['pts_features'], data['pts_input']
+        pts_rect, pts_features, pts_input, gt_boxes3d = data['pts_rect'], data['pts_features'], data['pts_input'], data['gt_boxes3d']
         batch_size = len(pts_input)
         inputs = torch.from_numpy(pts_input).cuda(non_blocking=True).float()
         input_data = {'pts_input': inputs}
@@ -356,8 +356,7 @@ def eval_one_epoch_joint(model, dataloader, epoch_id, result_dir, logger):
             pred_boxes3d_selected = pred_boxes3d_selected[keep_idx]
             scores_selected = raw_scores_selected[keep_idx]
             pred_boxes3d_selected, scores_selected = pred_boxes3d_selected.cpu().numpy(), scores_selected.cpu().numpy()
-
-            df_out.loc[len(df_out.index)] = [pts_input[k], pred_boxes3d_selected, scores_selected]
+            df_out.loc[len(df_out.index)] = [pts_input[k], gt_boxes3d[k], pred_boxes3d_selected, scores_selected]
         
         fout = os.path.join('../output', 'rcnn', 'pred_pickles', str(file_idx) + '.pkl')
         df_out.to_pickle(fout)
