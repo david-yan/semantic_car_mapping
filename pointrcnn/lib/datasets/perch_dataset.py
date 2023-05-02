@@ -69,8 +69,8 @@ class PerchDataset(torch_data.Dataset):
         sample_info = {}
 
         aug_pts_lidar, aug_gt_boxes3d = self.pts_lidar[index], self.gt_boxes3d[index]
-        if cfg.AUG_DATA and self.mode == 'TRAIN':
-            aug_pts_lidar, aug_gt_boxes3d = self.data_augmentation(self.pts_lidar[index], self.gt_boxes3d[index])
+        # if cfg.AUG_DATA and self.mode == 'TRAIN':
+        #     aug_pts_lidar, aug_gt_boxes3d = self.data_augmentation(self.pts_lidar[index], self.gt_boxes3d[index])
 
         sample_info['pts_input'] = aug_pts_lidar
         sample_info['pts_rect'] = aug_pts_lidar

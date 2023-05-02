@@ -1,6 +1,6 @@
 import argparse
-import rospy
-import ros_numpy
+# import rospy
+# import ros_numpy
 import json
 import os
 import tf
