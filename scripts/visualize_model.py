@@ -94,7 +94,7 @@ most_similar_rows = np.argmax(cos_sim, axis=1)
 diff = gt[most_similar_rows]-pred
 
 # Pass criteria xyz_sse < 0.5, yaw < 10 degs
-xyz_threshold = 0.5
+xyz_threshold = 0.5**2
 yaw_threshold = np.deg2rad(10)
 
 xyz_sse = np.sum(diff[:, :3]**2, axis=1)
