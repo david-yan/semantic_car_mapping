@@ -71,7 +71,13 @@ Run the evaluation script which also saves predicted boxes as pickle files under
 python eval_perch.py --cfg_file cfgs/default.yaml --ckpt ../output/rcnn/default/ckpt/checkpoint_epoch_70.pth --batch_size 1 --eval_mode rcnn
 ```
 
-Run the metric calculation script located under semantic_car_mapping/scripts to evaluate the model:
+## Citation
 ```
-python3 evaluate_model.py --path ../pointrcnn/output/rcnn/[name of repo contained pickle files]
+@InProceedings{Shi_2019_CVPR,
+    author = {Shi, Shaoshuai and Wang, Xiaogang and Li, Hongsheng},
+    title = {PointRCNN: 3D Object Proposal Generation and Detection From Point Cloud},
+    booktitle = {The IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+    month = {June},
+    year = {2019}
+}
 ```
